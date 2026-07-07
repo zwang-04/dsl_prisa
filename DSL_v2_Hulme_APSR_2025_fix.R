@@ -59,8 +59,7 @@ for (shot_file in label_files) {
     return(list(valid = TRUE, values = numeric_values))
   }
   
-  # 完整聚合流水线只需要跑llama_70b（作为LLM预测值的来源）；
-  # original_label只用于bootstrap里的人工标签重抽样，直接在下面单独解析一次即可，不需要重复走一遍完整流水线
+  # 只需跑llama_70b；original_label在下面单独解析一次供bootstrap使用
   models_to_process <- c("llama_70b")
   
   processed_data_list <- list()
@@ -135,7 +134,7 @@ for (shot_file in label_files) {
     collapse2$individual_agg_support <- collapse2$aggregate_support.sum /
       (collapse2$aggregate_support.sum + collapse2$aggregate_opposition.sum)
 
-    # 与reanalysis保持一致：individual_agg_support为NA（支持+反对信号均为0）的行整行剔除，而非填0
+    # 与reanalysis一致：NA行整行剔除，不填0
     collapse2 <- subset(collapse2, !is.na(collapse2$individual_agg_support))
     collapse2$count <- 1
 
@@ -258,7 +257,7 @@ for (shot_file in label_files) {
                                  FUN=sum, data=DF_Early_Speeches_Only)
     collapse2_early$individual_agg_support <- collapse2_early$aggregate_support.sum/(collapse2_early$aggregate_support.sum+collapse2_early$aggregate_opposition.sum)
 
-    # 与reanalysis保持一致：整行剔除NA，而非填0
+    # 同上：整行剔除NA
     collapse2_early <- subset(collapse2_early, !is.na(collapse2_early$individual_agg_support))
     collapse2_early$count <- 1
     
@@ -298,7 +297,7 @@ for (shot_file in label_files) {
     Multivariate_DF <- CSUMF_CSS[c("crisno","avg_agg_support_Pre_Use_of_Force_ONLY_5adjust","avg_agg_support_5adjust")]
     Multivariate_DF <- merge(Covariates, Multivariate_DF, by = "crisno")
 
-    # basic_n（label_data_valid 关联 dataset 只做一次join，诊断打印和total_basic_n复用同一结果）
+    # basic_n：join一次，诊断打印和total_basic_n复用
     mapped_all <- label_data_valid %>%
       dplyr::select(original_row_id) %>%
       dplyr::left_join(dataset %>% dplyr::select(original_row_id, crisno, tweet), by = "original_row_id")
@@ -346,7 +345,7 @@ for (shot_file in label_files) {
     next
   }
 
-  # 解析original_label（供后续Bootstrap人工标签重抽样使用，只需解析一次，不再重复走完整聚合流水线）
+  # 解析original_label，供Bootstrap重抽样使用
   parsed_results_human <- lapply(label_data[["original_label"]], parse_and_validate_label)
   valid_indices_human <- sapply(parsed_results_human, function(x) x$valid)
   label_data_valid_human <- label_data[valid_indices_human, ]
@@ -440,7 +439,7 @@ for (shot_file in label_files) {
   for (bootstrap_iter in 1:100) {
     cat("\n=== Bootstrap迭代", bootstrap_iter, "===\n")
 
-    # 在基础演讲层进行抽样（tweet==0 且human_labeled==1，与主流程handcoded口径一致，再要求original_label解析有效）
+    # 基础层抽样：tweet==0且human_labeled==1，与handcoded口径一致
     base_speeches <- dataset %>%
       filter(tweet == 0, human_labeled == 1) %>%
       left_join(label_data_valid_human %>% dplyr::select(original_row_id), by = "original_row_id") %>%
@@ -492,7 +491,7 @@ for (shot_file in label_files) {
           handcoded_sampled$Advocates_against_Use_of_American_Air_Assets + 
           handcoded_sampled$Advocates_against_Use_of_American_Naval_Assets
         
-        # 重新聚合到危机级（与主流程一致：individual_agg_support为NA的行整行剔除，而非填0）
+        # 重新聚合到危机级（NA行剔除，与主流程一致）
         collapse2_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID,
                                        FUN=sum, data=handcoded_sampled)
         collapse2_sampled$individual_agg_support <- collapse2_sampled$aggregate_support.sum /
@@ -507,7 +506,7 @@ for (shot_file in label_files) {
         Full_set_speakers_sampled <- collapse2b_sampled[c("crisno", "count.sum")]
         colnames(Full_set_speakers_sampled)[colnames(Full_set_speakers_sampled) == "count.sum"] <- "Full_set_speakers_sampled"
 
-        # 计算 Pre_Use_of_Force_ONLY 版本（同样整行剔除NA）
+        # 计算 Pre_Use_of_Force_ONLY 版本
         DF_Early_Speeches_Only_sampled <- merge(handcoded_sampled, Early_Speeches_Only, by = "crisno")
         DF_Early_Speeches_Only_sampled <- subset(DF_Early_Speeches_Only_sampled,
                                                  as.Date(as.character(DF_Early_Speeches_Only_sampled$date), "%Y-%m-%d") <
@@ -537,7 +536,7 @@ for (shot_file in label_files) {
           Pre_init_speakers_sampled <- collapse2b_early_sampled[c("crisno", "count.sum")]
           colnames(Pre_init_speakers_sampled)[colnames(Pre_init_speakers_sampled) == "count.sum"] <- "Pre_init_speakers_sampled"
 
-          # 合并到主聚合结果（同时携带发言人数，供5adjust使用）
+          # 合并早期发言均值与人数
           collapse2b_sampled <- merge(collapse2b_sampled,
                                       collapse2b_early_sampled[c("crisno", "avg_agg_support")],
                                       by = "crisno", all.x = TRUE)
@@ -551,13 +550,13 @@ for (shot_file in label_files) {
           collapse2b_sampled$Pre_init_speakers_sampled <- NA_real_
         }
 
-        # 发言人数回退逻辑：与主流程CSUMF_CSS$Pre_init_speakers一致，缺失时用Full_set_speakers回退
+        # 缺失时回退到Full_set_speakers
         collapse2b_sampled <- merge(collapse2b_sampled, Full_set_speakers_sampled, by = "crisno", all.x = TRUE)
         collapse2b_sampled$Pre_init_speakers_sampled <- ifelse(is.na(collapse2b_sampled$Pre_init_speakers_sampled),
                                                                 collapse2b_sampled$Full_set_speakers_sampled,
                                                                 collapse2b_sampled$Pre_init_speakers_sampled)
 
-        # 5adjust：与llm端的avg_agg_support_Pre_Use_of_Force_ONLY_5adjust使用同一套发言人数收缩公式
+        # 5adjust：与llm端保持同一套收缩公式
         collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust <- ifelse(
           collapse2b_sampled$Pre_init_speakers_sampled > 4,
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY,
@@ -579,11 +578,7 @@ for (shot_file in label_files) {
     current_df <- dsl_data %>%
       left_join(crisis_labeled, by = "crisno") %>%
       left_join(crisis_agg, by = "crisno") %>%
-      mutate(
-        congressional_support_score_labeled = ifelse(is.na(congressional_support_score_labeled), NA, congressional_support_score_labeled),
-        agg_sample_prob = ifelse(is.na(agg_sample_prob), 0, agg_sample_prob)
-      ) %>%
-      filter(agg_sample_prob > 0) 
+      mutate(agg_sample_prob = ifelse(is.na(agg_sample_prob), 0, agg_sample_prob))
 
     basic_n_labeled_sum <- sum(base_speeches$is_labeled, na.rm = TRUE)
 
