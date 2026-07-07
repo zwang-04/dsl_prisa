@@ -387,11 +387,20 @@ for (shot_file in label_files) {
                   continuing_war, theta2_mean, prez_party, YM_HSM,
                   prez_copartisans, percent_repub.mean, US_high_act)
   
-  # LLM预测值：保留NA，不填0，和reanalysis依赖lm()的na.omit行为一致
+  # LLM预测值
   dsl_data$congressional_support_llm <- df_llm$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust
 
-  cat("  包含NA的congressional_support_llm数：", sum(is.na(dsl_data$congressional_support_llm)), "\n")
-  cat("  数据集大小：", nrow(dsl_data), "\n")
+  # 对于缺失的值，用0填充
+  dsl_data <- dsl_data %>%
+    mutate(
+      congressional_support_llm = ifelse(is.na(congressional_support_llm), 0, congressional_support_llm)
+    )
+
+  dsl_data <- dsl_data %>%
+    mutate(across(where(is.numeric), ~ifelse(is.na(.), 0, .)))
+
+  cat("  包含NA的congressional_support_llm数：", sum(is.na(df_llm$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust)), "\n")
+  cat("  填充后的最终数据集大小：", nrow(dsl_data), "\n")
   
   dsl_data$us_high_act_numeric <- as.numeric(as.character(dsl_data$US_high_act))
   dsl_data$congressional_support_score_llm <- dsl_data$congressional_support_llm
