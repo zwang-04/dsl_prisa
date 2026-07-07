@@ -138,9 +138,7 @@ for (shot_file in label_files) {
     collapse2$individual_agg_support <- collapse2$aggregate_support.sum / 
       (collapse2$aggregate_support.sum + collapse2$aggregate_opposition.sum)
 
-    collapse2$individual_agg_support <- ifelse(is.na(collapse2$individual_agg_support), 
-                                               0, 
-                                               collapse2$individual_agg_support)
+    collapse2 <- subset(collapse2, !is.na(collapse2$individual_agg_support))
     collapse2$count <- 1
 
     collapse2 <- collapse2 %>%
@@ -265,10 +263,7 @@ for (shot_file in label_files) {
                                  FUN=sum, data=DF_Early_Speeches_Only)
     collapse2_early$individual_agg_support <- collapse2_early$aggregate_support.sum/(collapse2_early$aggregate_support.sum+collapse2_early$aggregate_opposition.sum)
     
-    # collapse2_early <- subset(collapse2_early, !is.na(collapse2_early$individual_agg_support))
-    collapse2_early$individual_agg_support <- ifelse(is.na(collapse2_early$individual_agg_support), 
-                                                     0, 
-                                                     collapse2_early$individual_agg_support)
+    collapse2_early <- subset(collapse2_early, !is.na(collapse2_early$individual_agg_support))
     collapse2_early$count <- 1
     
     collapse2b_early <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
@@ -499,10 +494,9 @@ for (shot_file in label_files) {
         # 重新聚合到危机级
         collapse2_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
                                        FUN=sum, data=handcoded_sampled)
-        collapse2_sampled$individual_agg_support <- collapse2_sampled$aggregate_support.sum / 
+        collapse2_sampled$individual_agg_support <- collapse2_sampled$aggregate_support.sum /
           (collapse2_sampled$aggregate_support.sum + collapse2_sampled$aggregate_opposition.sum)
-        collapse2_sampled$individual_agg_support <- ifelse(is.na(collapse2_sampled$individual_agg_support), 
-                                                           0, collapse2_sampled$individual_agg_support)
+        collapse2_sampled <- subset(collapse2_sampled, !is.na(collapse2_sampled$individual_agg_support))
         collapse2_sampled$count <- 1
         
         collapse2b_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
@@ -528,8 +522,7 @@ for (shot_file in label_files) {
           collapse2_early_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
                                                FUN=sum, data=DF_Early_Speeches_Only_sampled)
           collapse2_early_sampled$individual_agg_support <- collapse2_early_sampled$aggregate_support.sum/(collapse2_early_sampled$aggregate_support.sum+collapse2_early_sampled$aggregate_opposition.sum)
-          collapse2_early_sampled$individual_agg_support <- ifelse(is.na(collapse2_early_sampled$individual_agg_support), 
-                                                                   0, collapse2_early_sampled$individual_agg_support)
+          collapse2_early_sampled <- subset(collapse2_early_sampled, !is.na(collapse2_early_sampled$individual_agg_support))
           collapse2_early_sampled$count <- 1
           
           collapse2b_early_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
@@ -537,23 +530,32 @@ for (shot_file in label_files) {
           collapse2b_early_sampled$avg_agg_support <- collapse2b_early_sampled$individual_agg_support.sum/collapse2b_early_sampled$count.sum
           
           # 合并到主聚合结果
-          collapse2b_sampled <- merge(collapse2b_sampled, 
-                                      collapse2b_early_sampled[c("crisno", "avg_agg_support")], 
+          collapse2b_sampled <- merge(collapse2b_sampled,
+                                      collapse2b_early_sampled[c("crisno", "avg_agg_support", "count.sum")],
                                       by = "crisno", all.x = TRUE)
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support.y
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- ifelse(is.na(collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY),
                                                                              collapse2b_sampled$avg_agg_support.x,
                                                                              collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY)
+          collapse2b_sampled$Pre_init_speakers <- ifelse(is.na(collapse2b_sampled$count.sum.y),
+                                                          collapse2b_sampled$count.sum.x,
+                                                          collapse2b_sampled$count.sum.y)
         } else {
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support
+          collapse2b_sampled$Pre_init_speakers <- collapse2b_sampled$count.sum
         }
-        
+
         # 调整支持度分数
         collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY - 0.5
-        
+
+        # 动用前的支持分数调整（与LLM分支的Pre_init_speakers > 4收缩调整保持一致）
+        collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust <- ifelse(collapse2b_sampled$Pre_init_speakers > 4,
+                                                                                   collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY,
+                                                                                   collapse2b_sampled$Pre_init_speakers * .2 * collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY)
+
         # 创建危机级标注数据
-        crisis_labeled <- collapse2b_sampled[c("crisno", "avg_agg_support_Pre_Use_of_Force_ONLY")]
-        crisis_labeled$congressional_support_score_labeled <- crisis_labeled$avg_agg_support_Pre_Use_of_Force_ONLY
+        crisis_labeled <- collapse2b_sampled[c("crisno", "avg_agg_support_Pre_Use_of_Force_ONLY_5adjust")]
+        crisis_labeled$congressional_support_score_labeled <- crisis_labeled$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust
         
       } else {
         # 没有抽中的标注演讲
