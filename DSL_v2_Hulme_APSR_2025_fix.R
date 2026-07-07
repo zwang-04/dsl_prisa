@@ -59,8 +59,9 @@ for (shot_file in label_files) {
     return(list(valid = TRUE, values = numeric_values))
   }
   
-  # original_label 和 llama_70b 
-  models_to_process <- c("original_label", "llama_70b")
+  # 仅处理 llama_70b；human label（original_label）的处理逻辑见下方 Bootstrap 前的单独解析，
+  # 避免与此处重复计算（该分支此前算出的 Multivariate_DF 从未被下游使用）
+  models_to_process <- c("llama_70b")
   
   processed_data_list <- list()
   
@@ -128,21 +129,14 @@ for (shot_file in label_files) {
       handcoded$Advocates_against_Use_of_American_Air_Assets + 
       handcoded$Advocates_against_Use_of_American_Naval_Assets
 
-    handcoded_with_basic_n <- handcoded %>%
-      group_by(crisname, crisno, MasterID) %>%
-      summarise(basic_n = dplyr::n(), .groups = "drop")
-    
     # 第一次聚合：按危机-议员
-    collapse2 <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
+    collapse2 <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID,
                            FUN=sum, data=handcoded)
-    collapse2$individual_agg_support <- collapse2$aggregate_support.sum / 
+    collapse2$individual_agg_support <- collapse2$aggregate_support.sum /
       (collapse2$aggregate_support.sum + collapse2$aggregate_opposition.sum)
 
     collapse2 <- subset(collapse2, !is.na(collapse2$individual_agg_support))
     collapse2$count <- 1
-
-    collapse2 <- collapse2 %>%
-      left_join(handcoded_with_basic_n, by = c("crisname", "crisno", "MasterID"))
 
     collapse2_complete <- collapse2
     
@@ -344,8 +338,8 @@ for (shot_file in label_files) {
     processed_data_list[[model_col]] <- Multivariate_DF
   }
 
-  if (!"original_label" %in% names(processed_data_list) || !"llama_70b" %in% names(processed_data_list)) {
-    cat("错误：未能成功处理 original_label 或 llama_70b\n")
+  if (!"llama_70b" %in% names(processed_data_list)) {
+    cat("错误：未能成功处理 llama_70b\n")
     next
   }
 
@@ -408,7 +402,7 @@ for (shot_file in label_files) {
   cat("样本大小设置为:", sample_size, "\n")
   
   # 需要定义一些变量供Bootstrap循环使用
-  # 重新处理original_label数据
+  # 解析 original_label（human label）数据
   parsed_results_human <- lapply(label_data[["original_label"]], parse_and_validate_label)
   valid_indices_human <- sapply(parsed_results_human, function(x) x$valid)
   label_data_valid_human <- label_data[valid_indices_human, ]
@@ -432,9 +426,9 @@ for (shot_file in label_files) {
                   Advocates_against_Use_of_American_Ground_Troops,
                   Advocates_against_Use_of_American_Air_Assets,
                   Advocates_against_Use_of_American_Naval_Assets)
-  
-  Early_Speeches_Only <- CSUMF_Crises[c(1:10,15)]
-  
+
+  # Early_Speeches_Only 已在上方 llama_70b 处理循环中赋值为 CSUMF_Crises[c(1:10,15)]，此处直接复用
+
   # Bootstrap循环
   for (bootstrap_iter in 1:100) {
     cat("\n=== Bootstrap迭代", bootstrap_iter, "===\n")
