@@ -577,8 +577,7 @@ for (shot_file in label_files) {
     
     current_df <- dsl_data %>%
       left_join(crisis_labeled, by = "crisno") %>%
-      left_join(crisis_agg, by = "crisno") %>%
-      mutate(agg_sample_prob = ifelse(is.na(agg_sample_prob), 0, agg_sample_prob))
+      left_join(crisis_agg, by = "crisno")
 
     basic_n_labeled_sum <- sum(base_speeches$is_labeled, na.rm = TRUE)
 
