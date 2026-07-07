@@ -59,8 +59,8 @@ for (shot_file in label_files) {
     return(list(valid = TRUE, values = numeric_values))
   }
   
-  # original_label 和 llama_70b 
-  models_to_process <- c("original_label", "llama_70b")
+  # 只需跑llama_70b；original_label在下面单独解析一次供bootstrap使用
+  models_to_process <- c("llama_70b")
   
   processed_data_list <- list()
   
@@ -128,23 +128,15 @@ for (shot_file in label_files) {
       handcoded$Advocates_against_Use_of_American_Air_Assets + 
       handcoded$Advocates_against_Use_of_American_Naval_Assets
 
-    handcoded_with_basic_n <- handcoded %>%
-      group_by(crisname, crisno, MasterID) %>%
-      summarise(basic_n = dplyr::n(), .groups = "drop")
-    
     # 第一次聚合：按危机-议员
-    collapse2 <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
+    collapse2 <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID,
                            FUN=sum, data=handcoded)
-    collapse2$individual_agg_support <- collapse2$aggregate_support.sum / 
+    collapse2$individual_agg_support <- collapse2$aggregate_support.sum /
       (collapse2$aggregate_support.sum + collapse2$aggregate_opposition.sum)
 
-    collapse2$individual_agg_support <- ifelse(is.na(collapse2$individual_agg_support), 
-                                               0, 
-                                               collapse2$individual_agg_support)
+    # 与reanalysis一致：NA行整行剔除，不填0
+    collapse2 <- subset(collapse2, !is.na(collapse2$individual_agg_support))
     collapse2$count <- 1
-
-    collapse2 <- collapse2 %>%
-      left_join(handcoded_with_basic_n, by = c("crisname", "crisno", "MasterID"))
 
     collapse2_complete <- collapse2
     
@@ -264,11 +256,9 @@ for (shot_file in label_files) {
     collapse2_early <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
                                  FUN=sum, data=DF_Early_Speeches_Only)
     collapse2_early$individual_agg_support <- collapse2_early$aggregate_support.sum/(collapse2_early$aggregate_support.sum+collapse2_early$aggregate_opposition.sum)
-    
-    # collapse2_early <- subset(collapse2_early, !is.na(collapse2_early$individual_agg_support))
-    collapse2_early$individual_agg_support <- ifelse(is.na(collapse2_early$individual_agg_support), 
-                                                     0, 
-                                                     collapse2_early$individual_agg_support)
+
+    # 同上：整行剔除NA
+    collapse2_early <- subset(collapse2_early, !is.na(collapse2_early$individual_agg_support))
     collapse2_early$count <- 1
     
     collapse2b_early <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
@@ -307,12 +297,11 @@ for (shot_file in label_files) {
     Multivariate_DF <- CSUMF_CSS[c("crisno","avg_agg_support_Pre_Use_of_Force_ONLY_5adjust","avg_agg_support_5adjust")]
     Multivariate_DF <- merge(Covariates, Multivariate_DF, by = "crisno")
 
-    # basic_n
-    zero_shot_map <- dataset %>%
-      dplyr::select(original_row_id, crisno, tweet)
-    zero_shot_valid <- label_data_valid %>%
+    # basic_n：join一次，诊断打印和total_basic_n复用
+    mapped_all <- label_data_valid %>%
       dplyr::select(original_row_id) %>%
-      left_join(zero_shot_map, by = "original_row_id") %>%
+      dplyr::left_join(dataset %>% dplyr::select(original_row_id, crisno, tweet), by = "original_row_id")
+    zero_shot_valid <- mapped_all %>%
       filter(!is.na(crisno), tweet == 0)
     collapse2_with_basic <- zero_shot_valid %>%
       group_by(crisno) %>%
@@ -325,9 +314,6 @@ for (shot_file in label_files) {
       cat("\n==== 基数校验 (", model_col, ") ====\n", sep = "")
       cat("0-shot CSV总行:", nrow(label_data), "\n")
       cat("0-shot 解析有效行:", valid_count, "\n")
-      mapped_all <- label_data_valid %>%
-        dplyr::select(original_row_id) %>%
-        dplyr::left_join(dataset %>% dplyr::select(original_row_id, crisno, tweet), by = "original_row_id")
       cat("有效且能映射到dataset的行:", nrow(mapped_all), "\n")
       cat("其中tweet==0的行:", sum(mapped_all$tweet == 0, na.rm = TRUE), "\n")
       cat("tweet==0且crisno非缺失的行:", sum(mapped_all$tweet == 0 & !is.na(mapped_all$crisno), na.rm = TRUE), "\n")
@@ -349,10 +335,45 @@ for (shot_file in label_files) {
     processed_data_list[[model_col]] <- Multivariate_DF
   }
 
-  if (!"original_label" %in% names(processed_data_list) || !"llama_70b" %in% names(processed_data_list)) {
-    cat("错误：未能成功处理 original_label 或 llama_70b\n")
+  if (!"llama_70b" %in% names(processed_data_list)) {
+    cat("错误：未能成功处理 llama_70b\n")
     next
   }
+
+  if (!"original_label" %in% colnames(label_data)) {
+    cat("错误：未找到 original_label 列\n")
+    next
+  }
+
+  # 解析original_label，供Bootstrap重抽样使用
+  parsed_results_human <- lapply(label_data[["original_label"]], parse_and_validate_label)
+  valid_indices_human <- sapply(parsed_results_human, function(x) x$valid)
+  label_data_valid_human <- label_data[valid_indices_human, ]
+
+  if (nrow(label_data_valid_human) == 0) {
+    cat("错误：original_label 没有解析出有效数据\n")
+    next
+  }
+
+  label_data_valid_human$Advocates_for_Use_of_American_Military_Force <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[1])
+  label_data_valid_human$Advocates_for_Use_of_American_Ground_Troops <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[2])
+  label_data_valid_human$Advocates_for_Use_of_American_Air_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[3])
+  label_data_valid_human$Advocates_for_Use_of_American_Naval_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[4])
+  label_data_valid_human$Advocates_against_Use_of_American_Military_Force <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[5])
+  label_data_valid_human$Advocates_against_Use_of_American_Ground_Troops <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[6])
+  label_data_valid_human$Advocates_against_Use_of_American_Air_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[7])
+  label_data_valid_human$Advocates_against_Use_of_American_Naval_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[8])
+
+  label_data_selected_human <- label_data_valid_human %>%
+    dplyr::select(original_row_id,
+                  Advocates_for_Use_of_American_Military_Force,
+                  Advocates_for_Use_of_American_Ground_Troops,
+                  Advocates_for_Use_of_American_Air_Assets,
+                  Advocates_for_Use_of_American_Naval_Assets,
+                  Advocates_against_Use_of_American_Military_Force,
+                  Advocates_against_Use_of_American_Ground_Troops,
+                  Advocates_against_Use_of_American_Air_Assets,
+                  Advocates_against_Use_of_American_Naval_Assets)
 
   df_llm <- processed_data_list[["llama_70b"]]
   
@@ -412,41 +433,15 @@ for (shot_file in label_files) {
   cat("\n创建结果文件:", results_file, "\n")
   cat("样本大小设置为:", sample_size, "\n")
   
-  # 需要定义一些变量供Bootstrap循环使用
-  # 重新处理original_label数据
-  parsed_results_human <- lapply(label_data[["original_label"]], parse_and_validate_label)
-  valid_indices_human <- sapply(parsed_results_human, function(x) x$valid)
-  label_data_valid_human <- label_data[valid_indices_human, ]
-  
-  label_data_valid_human$Advocates_for_Use_of_American_Military_Force <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[1])
-  label_data_valid_human$Advocates_for_Use_of_American_Ground_Troops <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[2])
-  label_data_valid_human$Advocates_for_Use_of_American_Air_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[3])
-  label_data_valid_human$Advocates_for_Use_of_American_Naval_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[4])
-  label_data_valid_human$Advocates_against_Use_of_American_Military_Force <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[5])
-  label_data_valid_human$Advocates_against_Use_of_American_Ground_Troops <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[6])
-  label_data_valid_human$Advocates_against_Use_of_American_Air_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[7])
-  label_data_valid_human$Advocates_against_Use_of_American_Naval_Assets <- sapply(parsed_results_human[valid_indices_human], function(x) x$values[8])
-  
-  label_data_selected_human <- label_data_valid_human %>%
-    dplyr::select(original_row_id, 
-                  Advocates_for_Use_of_American_Military_Force,
-                  Advocates_for_Use_of_American_Ground_Troops,
-                  Advocates_for_Use_of_American_Air_Assets,
-                  Advocates_for_Use_of_American_Naval_Assets,
-                  Advocates_against_Use_of_American_Military_Force,
-                  Advocates_against_Use_of_American_Ground_Troops,
-                  Advocates_against_Use_of_American_Air_Assets,
-                  Advocates_against_Use_of_American_Naval_Assets)
-  
   Early_Speeches_Only <- CSUMF_Crises[c(1:10,15)]
   
   # Bootstrap循环
   for (bootstrap_iter in 1:100) {
     cat("\n=== Bootstrap迭代", bootstrap_iter, "===\n")
 
-    # 在基础演讲层进行抽样（tweet==0 且有标注）
+    # 基础层抽样：tweet==0且human_labeled==1，与handcoded口径一致
     base_speeches <- dataset %>%
-      filter(tweet == 0) %>%
+      filter(tweet == 0, human_labeled == 1) %>%
       left_join(label_data_valid_human %>% dplyr::select(original_row_id), by = "original_row_id") %>%
       filter(!is.na(original_row_id))
     
@@ -496,65 +491,82 @@ for (shot_file in label_files) {
           handcoded_sampled$Advocates_against_Use_of_American_Air_Assets + 
           handcoded_sampled$Advocates_against_Use_of_American_Naval_Assets
         
-        # 重新聚合到危机级
-        collapse2_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
+        # 重新聚合到危机级（NA行剔除，与主流程一致）
+        collapse2_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID,
                                        FUN=sum, data=handcoded_sampled)
-        collapse2_sampled$individual_agg_support <- collapse2_sampled$aggregate_support.sum / 
+        collapse2_sampled$individual_agg_support <- collapse2_sampled$aggregate_support.sum /
           (collapse2_sampled$aggregate_support.sum + collapse2_sampled$aggregate_opposition.sum)
-        collapse2_sampled$individual_agg_support <- ifelse(is.na(collapse2_sampled$individual_agg_support), 
-                                                           0, collapse2_sampled$individual_agg_support)
+        collapse2_sampled <- subset(collapse2_sampled, !is.na(collapse2_sampled$individual_agg_support))
         collapse2_sampled$count <- 1
-        
-        collapse2b_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
+
+        collapse2b_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno,
                                         FUN=sum, data=collapse2_sampled)
         collapse2b_sampled$avg_agg_support <- collapse2b_sampled$individual_agg_support.sum/collapse2b_sampled$count.sum
-        
+        collapse2b_sampled$avg_agg_support <- collapse2b_sampled$avg_agg_support - 0.5
+        Full_set_speakers_sampled <- collapse2b_sampled[c("crisno", "count.sum")]
+        colnames(Full_set_speakers_sampled)[colnames(Full_set_speakers_sampled) == "count.sum"] <- "Full_set_speakers_sampled"
+
         # 计算 Pre_Use_of_Force_ONLY 版本
         DF_Early_Speeches_Only_sampled <- merge(handcoded_sampled, Early_Speeches_Only, by = "crisno")
-        DF_Early_Speeches_Only_sampled <- subset(DF_Early_Speeches_Only_sampled, 
-                                                 as.Date(as.character(DF_Early_Speeches_Only_sampled$date), "%Y-%m-%d") < 
+        DF_Early_Speeches_Only_sampled <- subset(DF_Early_Speeches_Only_sampled,
+                                                 as.Date(as.character(DF_Early_Speeches_Only_sampled$date), "%Y-%m-%d") <
                                                    as.Date(as.character(DF_Early_Speeches_Only_sampled$US_force_init), "%Y%m%d"))
-        
+
         if (nrow(DF_Early_Speeches_Only_sampled) > 0) {
-          DF_Early_Speeches_Only_sampled$aggregate_support <- DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Military_Force + 
-            DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Ground_Troops + 
-            DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Air_Assets + 
+          DF_Early_Speeches_Only_sampled$aggregate_support <- DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Military_Force +
+            DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Ground_Troops +
+            DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Air_Assets +
             DF_Early_Speeches_Only_sampled$Advocates_for_Use_of_American_Naval_Assets
-          DF_Early_Speeches_Only_sampled$aggregate_opposition <- DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Military_Force + 
-            DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Ground_Troops + 
-            DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Air_Assets + 
+          DF_Early_Speeches_Only_sampled$aggregate_opposition <- DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Military_Force +
+            DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Ground_Troops +
+            DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Air_Assets +
             DF_Early_Speeches_Only_sampled$Advocates_against_Use_of_American_Naval_Assets
-          
-          collapse2_early_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID, 
+
+          collapse2_early_sampled <- summaryBy(aggregate_support + aggregate_opposition ~ crisname + crisno + MasterID,
                                                FUN=sum, data=DF_Early_Speeches_Only_sampled)
           collapse2_early_sampled$individual_agg_support <- collapse2_early_sampled$aggregate_support.sum/(collapse2_early_sampled$aggregate_support.sum+collapse2_early_sampled$aggregate_opposition.sum)
-          collapse2_early_sampled$individual_agg_support <- ifelse(is.na(collapse2_early_sampled$individual_agg_support), 
-                                                                   0, collapse2_early_sampled$individual_agg_support)
+          collapse2_early_sampled <- subset(collapse2_early_sampled, !is.na(collapse2_early_sampled$individual_agg_support))
           collapse2_early_sampled$count <- 1
-          
-          collapse2b_early_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
+
+          collapse2b_early_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno,
                                                 FUN=sum, data=collapse2_early_sampled)
           collapse2b_early_sampled$avg_agg_support <- collapse2b_early_sampled$individual_agg_support.sum/collapse2b_early_sampled$count.sum
-          
-          # 合并到主聚合结果
-          collapse2b_sampled <- merge(collapse2b_sampled, 
-                                      collapse2b_early_sampled[c("crisno", "avg_agg_support")], 
+          collapse2b_early_sampled$avg_agg_support <- collapse2b_early_sampled$avg_agg_support - 0.5
+
+          Pre_init_speakers_sampled <- collapse2b_early_sampled[c("crisno", "count.sum")]
+          colnames(Pre_init_speakers_sampled)[colnames(Pre_init_speakers_sampled) == "count.sum"] <- "Pre_init_speakers_sampled"
+
+          # 合并早期发言均值与人数
+          collapse2b_sampled <- merge(collapse2b_sampled,
+                                      collapse2b_early_sampled[c("crisno", "avg_agg_support")],
                                       by = "crisno", all.x = TRUE)
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support.y
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- ifelse(is.na(collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY),
                                                                              collapse2b_sampled$avg_agg_support.x,
                                                                              collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY)
+          collapse2b_sampled <- merge(collapse2b_sampled, Pre_init_speakers_sampled, by = "crisno", all.x = TRUE)
         } else {
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support
+          collapse2b_sampled$Pre_init_speakers_sampled <- NA_real_
         }
-        
-        # 调整支持度分数
-        collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY - 0.5
-        
+
+        # 缺失时回退到Full_set_speakers
+        collapse2b_sampled <- merge(collapse2b_sampled, Full_set_speakers_sampled, by = "crisno", all.x = TRUE)
+        collapse2b_sampled$Pre_init_speakers_sampled <- ifelse(is.na(collapse2b_sampled$Pre_init_speakers_sampled),
+                                                                collapse2b_sampled$Full_set_speakers_sampled,
+                                                                collapse2b_sampled$Pre_init_speakers_sampled)
+
+        # 5adjust：与llm端保持同一套收缩公式
+        collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust <- ifelse(
+          collapse2b_sampled$Pre_init_speakers_sampled > 4,
+          collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY,
+          collapse2b_sampled$Pre_init_speakers_sampled * .2 * collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY
+        )
+
         # 创建危机级标注数据
-        crisis_labeled <- collapse2b_sampled[c("crisno", "avg_agg_support_Pre_Use_of_Force_ONLY")]
-        crisis_labeled$congressional_support_score_labeled <- crisis_labeled$avg_agg_support_Pre_Use_of_Force_ONLY
-        
+        crisis_labeled <- collapse2b_sampled[c("crisno", "avg_agg_support_Pre_Use_of_Force_ONLY_5adjust")]
+        crisis_labeled$congressional_support_score_labeled <- crisis_labeled$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust
+
       } else {
         # 没有抽中的标注演讲
         crisis_labeled <- data.frame(crisno = character(0), congressional_support_score_labeled = numeric(0))
@@ -565,12 +577,7 @@ for (shot_file in label_files) {
     
     current_df <- dsl_data %>%
       left_join(crisis_labeled, by = "crisno") %>%
-      left_join(crisis_agg, by = "crisno") %>%
-      mutate(
-        congressional_support_score_labeled = ifelse(is.na(congressional_support_score_labeled), NA, congressional_support_score_labeled),
-        agg_sample_prob = ifelse(is.na(agg_sample_prob), 0, agg_sample_prob)
-      ) %>%
-      filter(agg_sample_prob > 0) 
+      left_join(crisis_agg, by = "crisno")
 
     basic_n_labeled_sum <- sum(base_speeches$is_labeled, na.rm = TRUE)
 
