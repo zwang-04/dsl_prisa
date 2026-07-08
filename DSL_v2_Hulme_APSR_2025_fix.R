@@ -303,12 +303,6 @@ for (shot_file in label_files) {
       dplyr::select(original_row_id) %>%
       left_join(zero_shot_map, by = "original_row_id") %>%
       filter(!is.na(crisno), tweet == 0)
-    collapse2_with_basic <- zero_shot_valid %>%
-      group_by(crisno) %>%
-      summarise(total_basic_n = dplyr::n(), .groups = "drop")
-
-    Multivariate_DF <- Multivariate_DF %>%
-      left_join(collapse2_with_basic, by = "crisno")
 
     {
       cat("\n==== 基数校验 (", model_col, ") ====\n", sep = "")
@@ -430,9 +424,9 @@ for (shot_file in label_files) {
   for (bootstrap_iter in 1:100) {
     cat("\n=== Bootstrap迭代", bootstrap_iter, "===\n")
 
-    # 在基础演讲层进行抽样（tweet==0 且有标注）
+    # 在基础演讲层进行抽样（human_labeled==1 且 tweet==0 且 original_label 可解析）
     base_speeches <- dataset %>%
-      filter(tweet == 0) %>%
+      filter(human_labeled == 1, tweet == 0) %>%
       left_join(label_data_valid_human %>% dplyr::select(original_row_id), by = "original_row_id") %>%
       filter(!is.na(original_row_id))
     
