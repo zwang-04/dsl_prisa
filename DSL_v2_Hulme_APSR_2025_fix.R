@@ -363,10 +363,7 @@ for (shot_file in label_files) {
     mutate(
       congressional_support_llm = ifelse(is.na(congressional_support_llm), 0, congressional_support_llm)
     )
-  
-  dsl_data <- dsl_data %>%
-    mutate(across(where(is.numeric), ~ifelse(is.na(.), 0, .)))
-  
+
   cat("  包含NA的congressional_support_llm数：", sum(is.na(df_llm$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust)), "\n")
   cat("  填充后的最终数据集大小：", nrow(dsl_data), "\n")
   
@@ -493,10 +490,11 @@ for (shot_file in label_files) {
         collapse2_sampled <- subset(collapse2_sampled, !is.na(collapse2_sampled$individual_agg_support))
         collapse2_sampled$count <- 1
         
-        collapse2b_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
+        collapse2b_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno,
                                         FUN=sum, data=collapse2_sampled)
         collapse2b_sampled$avg_agg_support <- collapse2b_sampled$individual_agg_support.sum/collapse2b_sampled$count.sum
-        
+        collapse2b_sampled$avg_agg_support <- collapse2b_sampled$avg_agg_support - 0.5
+
         # 计算 Pre_Use_of_Force_ONLY 版本
         DF_Early_Speeches_Only_sampled <- merge(handcoded_sampled, Early_Speeches_Only, by = "crisno")
         DF_Early_Speeches_Only_sampled <- subset(DF_Early_Speeches_Only_sampled, 
@@ -522,7 +520,8 @@ for (shot_file in label_files) {
           collapse2b_early_sampled <- summaryBy(individual_agg_support + count ~ crisname + crisno, 
                                                 FUN=sum, data=collapse2_early_sampled)
           collapse2b_early_sampled$avg_agg_support <- collapse2b_early_sampled$individual_agg_support.sum/collapse2b_early_sampled$count.sum
-          
+          collapse2b_early_sampled$avg_agg_support <- collapse2b_early_sampled$avg_agg_support - 0.5
+
           # 合并到主聚合结果
           collapse2b_sampled <- merge(collapse2b_sampled,
                                       collapse2b_early_sampled[c("crisno", "avg_agg_support", "count.sum")],
@@ -538,9 +537,6 @@ for (shot_file in label_files) {
           collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support
           collapse2b_sampled$Pre_init_speakers <- collapse2b_sampled$count.sum
         }
-
-        # 调整支持度分数
-        collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY <- collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY - 0.5
 
         # 动用前的支持分数调整（与LLM分支的Pre_init_speakers > 4收缩调整保持一致）
         collapse2b_sampled$avg_agg_support_Pre_Use_of_Force_ONLY_5adjust <- ifelse(collapse2b_sampled$Pre_init_speakers > 4,
